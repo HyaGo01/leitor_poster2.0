@@ -9,36 +9,25 @@ import pytesseract
 import pyttsx3
 from PIL import Image, ImageTk
 
-
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-os.environ["TESSDATA_PREFIX"] = r"C:\Program Files\Tesseract-OCR\tessdata"
+from camera import Camera
 
 
-class Camera:
-    def __init__(self, indice=0):
-        self.cap = cv2.VideoCapture(indice)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+# =========================
+# CONFIG TESSERACT
+# =========================
 
-    def get_frame(self):
-        ret, frame = self.cap.read()
-        return frame if ret else None
+pytesseract.pytesseract.tesseract_cmd = (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+)
 
-    def release(self):
-        if self.cap:
-            self.cap.release()
+os.environ["TESSDATA_PREFIX"] = (
+    r"C:\Program Files\Tesseract-OCR\tessdata"
+)
 
 
-def recortar_area_texto(frame):
-    h, w = frame.shape[:2]
-
-    x1 = int(w * 0.23)
-    x2 = int(w * 0.72)
-    y1 = int(h * 0.22)
-    y2 = int(h * 0.65)
-
-    return frame[y1:y2, x1:x2]
-
+# =========================
+# DETECÇÃO DE PAPEL
+# =========================
 
 def ordenar_pontos(pts):
     rect = np.zeros((4, 2), dtype="float32")
@@ -56,9 +45,15 @@ def ordenar_pontos(pts):
 
 def detectar_papel(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    _, thresh = cv2.threshold(blur, 170, 255, cv2.THRESH_BINARY)
+    _, thresh = cv2.threshold(
+        blur,
+        170,
+        255,
+        cv2.THRESH_BINARY
+    )
 
     contornos, _ = cv2.findContours(
         thresh,
@@ -76,11 +71,15 @@ def detectar_papel(frame):
         return frame
 
     peri = cv2.arcLength(maior, True)
-    aprox = cv2.approxPolyDP(maior, 0.02 * peri, True)
+
+    aprox = cv2.approxPolyDP(
+        maior,
+        0.02 * peri,
+        True
+    )
 
     if len(aprox) != 4:
-        x, y, w, h = cv2.boundingRect(maior)
-        return frame[y:y + h, x:x + w]
+        return frame
 
     pts = aprox.reshape(4, 2)
     rect = ordenar_pontos(pts)
@@ -108,10 +107,19 @@ def detectar_papel(frame):
     ], dtype="float32")
 
     matriz = cv2.getPerspectiveTransform(rect, destino)
-    corrigida = cv2.warpPerspective(frame, matriz, (largura, altura))
+
+    corrigida = cv2.warpPerspective(
+        frame,
+        matriz,
+        (largura, altura)
+    )
 
     return corrigida
 
+
+# =========================
+# MELHORIA DE IMAGEM
+# =========================
 
 def melhorar_imagem(img):
     if len(img.shape) == 2:
@@ -135,8 +143,8 @@ def melhorar_imagem(img):
 
     gray = cv2.convertScaleAbs(
         gray,
-        alpha=1.45,
-        beta=12
+        alpha=1.5,
+        beta=10
     )
 
     _, thresh = cv2.threshold(
@@ -148,6 +156,10 @@ def melhorar_imagem(img):
 
     return thresh
 
+
+# =========================
+# LIMPEZA OCR
+# =========================
 
 def limpar_texto(texto):
     linhas = []
@@ -172,27 +184,16 @@ def limpar_texto(texto):
 
         linhas.append(linha)
 
-    texto_limpo = "\n".join(linhas)
+    return "\n".join(linhas)
 
-    correcoes = {
-        "FelizDiado": "Feliz Dia do ",
-        "FelizDia do": "Feliz Dia do ",
-        "FelizDia": "Feliz Dia",
-        "Diado": "Dia do",
-        "diado": "dia do",
-        "Feliz Dia do  Trabalho": "Feliz Dia do Trabalho",
-    }
 
-    for errado, certo in correcoes.items():
-        texto_limpo = texto_limpo.replace(errado, certo)
-
-    return texto_limpo
-
+# =========================
+# OCR
+# =========================
 
 def extrair_texto_tesseract(frame, origem_camera=True):
     if origem_camera:
-        base = recortar_area_texto(frame)
-        papel = detectar_papel(base)
+        papel = detectar_papel(frame)
     else:
         papel = frame.copy()
 
@@ -202,7 +203,6 @@ def extrair_texto_tesseract(frame, origem_camera=True):
         "--oem 3 "
         "--psm 6 "
         "-c preserve_interword_spaces=1 "
-        "-c textord_space_size_is_variable=1 "
     )
 
     texto = pytesseract.image_to_string(
@@ -216,6 +216,10 @@ def extrair_texto_tesseract(frame, origem_camera=True):
     return texto, imagem_tratada
 
 
+# =========================
+# VOZ
+# =========================
+
 def falar_texto(texto):
     if not texto.strip():
         return
@@ -226,24 +230,56 @@ def falar_texto(texto):
     engine.runAndWait()
 
 
+# =========================
+# APP
+# =========================
+
 class App:
     def __init__(self, root):
         self.root = root
+
         self.root.title("Leitor OCR Otimizado")
         self.root.geometry("1400x850")
         self.root.configure(bg="#f0f0f0")
 
-        self.camera = Camera()
+        self.camera = Camera(0)
+
         self.processando = False
+        self.trocando_camera = False
         self.imagem_carregada = None
 
-        frame_principal = tk.Frame(root, bg="#f0f0f0")
-        frame_principal.pack(fill="both", expand=True, padx=10, pady=10)
+        # =========================
+        # LAYOUT
+        # =========================
 
-        esquerda = tk.Frame(frame_principal, bg="#f0f0f0")
-        esquerda.pack(side="left", fill="both", expand=True)
+        frame_principal = tk.Frame(
+            root,
+            bg="#f0f0f0"
+        )
 
-        self.label_video = tk.Label(esquerda, bg="black")
+        frame_principal.pack(
+            fill="both",
+            expand=True,
+            padx=10,
+            pady=10
+        )
+
+        esquerda = tk.Frame(
+            frame_principal,
+            bg="#f0f0f0"
+        )
+
+        esquerda.pack(
+            side="left",
+            fill="both",
+            expand=True
+        )
+
+        self.label_video = tk.Label(
+            esquerda,
+            bg="black"
+        )
+
         self.label_video.pack(pady=10)
 
         self.texto_box = tk.Text(
@@ -252,10 +288,24 @@ class App:
             font=("Arial", 14),
             wrap="word"
         )
-        self.texto_box.pack(fill="both", expand=True)
 
-        direita = tk.Frame(frame_principal, bg="#dcdcdc", width=260)
-        direita.pack(side="right", fill="y", padx=10)
+        self.texto_box.pack(
+            fill="both",
+            expand=True
+        )
+
+        direita = tk.Frame(
+            frame_principal,
+            bg="#dcdcdc",
+            width=260
+        )
+
+        direita.pack(
+            side="right",
+            fill="y",
+            padx=10
+        )
+
         direita.pack_propagate(False)
 
         titulo = tk.Label(
@@ -264,10 +314,12 @@ class App:
             bg="#dcdcdc",
             font=("Arial", 18, "bold")
         )
+
         titulo.pack(pady=20)
 
         botoes = [
             ("Capturar da câmera", self.capturar, "#4CAF50"),
+            ("Trocar câmera", self.trocar_camera, "#009688"),
             ("Abrir imagem", self.abrir_imagem, "#673AB7"),
             ("Ler em voz alta", self.ler_texto, "#2196F3"),
             ("Limpar", self.limpar, "#FF9800"),
@@ -287,16 +339,25 @@ class App:
 
         self.status = tk.Label(
             direita,
-            text="Sistema pronto",
+            text=f"Sistema pronto - câmera {self.camera.indice}",
             bg="#dcdcdc",
             fg="green",
             font=("Arial", 12, "bold")
         )
+
         self.status.pack(pady=40)
 
         self.update_video()
 
+    # =========================
+    # VIDEO
+    # =========================
+
     def update_video(self):
+        if self.trocando_camera:
+            self.root.after(100, self.update_video)
+            return
+
         if self.imagem_carregada is not None:
             self.root.after(40, self.update_video)
             return
@@ -314,7 +375,11 @@ class App:
 
         h, w = frame.shape[:2]
 
-        escala = min(largura_max / w, altura_max / h)
+        escala = min(
+            largura_max / w,
+            altura_max / h
+        )
+
         nova_largura = int(w * escala)
         nova_altura = int(h * escala)
 
@@ -325,23 +390,82 @@ class App:
         )
 
         if len(frame.shape) == 2:
-            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            frame = cv2.cvtColor(
+                frame,
+                cv2.COLOR_GRAY2BGR
+            )
 
-        fundo = np.zeros((altura_max, largura_max, 3), dtype=np.uint8)
+        fundo = np.zeros(
+            (altura_max, largura_max, 3),
+            dtype=np.uint8
+        )
+
         fundo[:] = (240, 240, 240)
 
         y = (altura_max - nova_altura) // 2
         x = (largura_max - nova_largura) // 2
 
-        fundo[y:y + nova_altura, x:x + nova_largura] = frame
+        fundo[
+            y:y + nova_altura,
+            x:x + nova_largura
+        ] = frame
 
-        frame_rgb = cv2.cvtColor(fundo, cv2.COLOR_BGR2RGB)
+        frame_rgb = cv2.cvtColor(
+            fundo,
+            cv2.COLOR_BGR2RGB
+        )
 
         img = Image.fromarray(frame_rgb)
+
         imgtk = ImageTk.PhotoImage(image=img)
 
         self.label_video.imgtk = imgtk
         self.label_video.configure(image=imgtk)
+
+    # =========================
+    # AÇÕES
+    # =========================
+
+    def trocar_camera(self):
+        if self.processando or self.trocando_camera:
+            return
+
+        self.trocando_camera = True
+        self.imagem_carregada = None
+
+        self.status.config(
+            text="Trocando câmera...",
+            fg="orange"
+        )
+
+        def tarefa():
+            indice, sucesso = self.camera.trocar_camera()
+
+            def atualizar_tela():
+                if sucesso:
+                    self.status.config(
+                        text=f"Câmera atual: {indice}",
+                        fg="blue"
+                    )
+                else:
+                    self.status.config(
+                        text=f"Erro ao trocar. Câmera atual: {indice}",
+                        fg="red"
+                    )
+
+                    messagebox.showwarning(
+                        "Aviso",
+                        f"Não foi possível abrir a câmera {indice}."
+                    )
+
+                self.trocando_camera = False
+
+            self.root.after(0, atualizar_tela)
+
+        threading.Thread(
+            target=tarefa,
+            daemon=True
+        ).start()
 
     def abrir_imagem(self):
         caminho = filedialog.askopenfilename(
@@ -372,7 +496,7 @@ class App:
         ).start()
 
     def capturar(self):
-        if self.processando:
+        if self.processando or self.trocando_camera:
             return
 
         frame = self.camera.get_frame()
@@ -402,7 +526,10 @@ class App:
         self.texto_box.insert(tk.END, "Lendo texto...\n")
 
         try:
-            texto, imagem = extrair_texto_tesseract(frame, origem_camera)
+            texto, imagem = extrair_texto_tesseract(
+                frame,
+                origem_camera
+            )
 
             self.mostrar_imagem(imagem)
 
@@ -415,6 +542,7 @@ class App:
                     text="OCR concluído",
                     fg="green"
                 )
+
             else:
                 self.texto_box.insert(
                     tk.END,
@@ -429,7 +557,11 @@ class App:
 
         except Exception as e:
             self.texto_box.delete("1.0", tk.END)
-            self.texto_box.insert(tk.END, f"Erro:\n{e}")
+
+            self.texto_box.insert(
+                tk.END,
+                f"Erro:\n{e}"
+            )
 
             self.status.config(
                 text="Erro",
@@ -449,10 +581,11 @@ class App:
 
     def limpar(self):
         self.texto_box.delete("1.0", tk.END)
+
         self.imagem_carregada = None
 
         self.status.config(
-            text="Sistema pronto",
+            text=f"Sistema pronto - câmera {self.camera.indice}",
             fg="green"
         )
 
@@ -461,8 +594,13 @@ class App:
         self.root.destroy()
 
 
+# =========================
+# MAIN
+# =========================
+
 if __name__ == "__main__":
     root = tk.Tk()
+
     app = App(root)
 
     root.protocol(
