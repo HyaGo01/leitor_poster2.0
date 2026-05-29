@@ -1,5 +1,6 @@
 opencv-python
-pillow
+numpy
 pytesseract
 pyttsx3
-numpy
+pillow
+google-genai
